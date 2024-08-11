@@ -34,6 +34,39 @@ import VersionWarningModal from "../popups-etc/version-warning";
 import RoomPasswordPopup from "../popups-etc/room-password";
 import KeyBindingsModal from '../popups-etc/KeyBindingsModal'
 
+let screenRef: HTMLCanvasElement | null = null;
+let cleanupRef: (() => void) | undefined = undefined;
+let screenShakeSignal: Signal<number> | null = null;
+
+export const onRun = async () => {
+	foldAllTemplateLiterals();
+	if (!screenRef) return;
+
+	if (cleanupRef) cleanupRef();
+	errorLog.value = [];
+
+	const code = codeMirror.value?.state.doc.toString() ?? "";
+	const res = runGame(code, screenRef, (error) => {
+		errorLog.value = [...errorLog.value, error];
+	});
+
+	screenRef.focus();
+	if (screenShakeSignal) {
+		screenShakeSignal.value++;
+	}
+	setTimeout(() => {
+		if (screenShakeSignal) {
+			screenShakeSignal.value--;
+		}
+	}, 200);
+
+	cleanupRef = res?.cleanup;
+	if (res && res.error) {
+		console.error(res.error.raw);
+		errorLog.value = [...errorLog.value, res.error];
+	}
+};
+
 interface EditorProps {
 	persistenceState: Signal<PersistenceState>;
 	roomState?: Signal<RoomState>;
@@ -224,6 +257,7 @@ export default function Editor({ persistenceState, cookies, roomState }: EditorP
 
 	const [sessionId] = useState(nanoid());
 
+
 	useEffect(() => {
 		if(roomState){
 			isNewSaveStrat.value = true;
@@ -231,6 +265,7 @@ export default function Editor({ persistenceState, cookies, roomState }: EditorP
 			isNewSaveStrat.value = false;
 		}
 	}, [])
+
 
 	useEffect(() => {
 		const channel = new BroadcastChannel('session_channel');
@@ -397,32 +432,16 @@ export default function Editor({ persistenceState, cookies, roomState }: EditorP
 		return () => window.removeEventListener("mousemove", onMouseMove);
 	}, []);
 
+	useEffect(() => {
+		screenRef = screen.current;
+		cleanupRef = cleanup.current;
+		screenShakeSignal = screenShake;
+	});
+	useEffect(() => () => cleanup.current?.(), []);
 	// We like running games!
 	const screen = useRef<HTMLCanvasElement>(null);
-	const cleanup = useRef<(() => void) | null>(null);
+	const cleanup = useRef<(() => void) | undefined>();
 	const screenShake = useSignal(0);
-	const onRun = async () => {
-		foldAllTemplateLiterals();
-		if (!screen.current) return;
-
-		if (cleanup.current) cleanup.current();
-		errorLog.value = [];
-
-		const code = codeMirror.value?.state.doc.toString() ?? "";
-		const res = runGame(code, screen.current, (error) => {
-			errorLog.value = [...errorLog.value, error];
-		});
-
-		screen.current.focus();
-		screenShake.value++;
-		setTimeout(() => screenShake.value--, 200);
-
-		cleanup.current = res.cleanup;
-		if (res.error) {
-			console.error(res.error.raw);
-			errorLog.value = [...errorLog.value, res.error];
-		}
-	};
 
 	const onStop = async () => {
 		if (!screen.current) return;
@@ -518,7 +537,7 @@ export default function Editor({ persistenceState, cookies, roomState }: EditorP
 		return (
 			<div class={styles.page}>
 				<Navbar persistenceState={persistenceState} roomState={roomState}/>
-
+				
 				<div class={styles.pageMain}>
 					<div className={styles.codeContainer}>
 						<CodeMirror
@@ -569,16 +588,6 @@ export default function Editor({ persistenceState, cookies, roomState }: EditorP
 								))}
 							</div>
 						)}
-						<Button
-							accent
-							icon={IoPlayCircleOutline}
-							bigIcon
-							iconSide="right"
-							class={styles.playButton}
-							onClick={onRun}
-						>
-							Run
-						</Button>
 					</div>
 
 					<div
